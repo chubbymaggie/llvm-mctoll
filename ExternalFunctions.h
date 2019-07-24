@@ -1,14 +1,12 @@
-//===-- ExternalFunctions.h - Binary raiser utility llvm-mctoll -------===//
+//===-- ExternalFunctions.h -------------------------------------*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains the declaration of the ExternalFunction class
-// and the table of known external functions.
+// This file contains the table of known external functions.
 //
 //===----------------------------------------------------------------------===//
 
@@ -21,8 +19,8 @@
 using namespace llvm;
 
 class ExternalFunctions {
-  ExternalFunctions(){};
-  ~ExternalFunctions(){};
+  ExternalFunctions() {};
+  ~ExternalFunctions() {};
 
   typedef struct {
     StringRef ReturnType;
@@ -31,10 +29,11 @@ class ExternalFunctions {
   } RetAndArgs;
 
 public:
-  static Function *Create(StringRef &, Module &);
-  static Type *getPrimitiveType(const StringRef &, LLVMContext &);
+  static Function *Create(StringRef &CFuncName, Module &M);
+  static Type *getPrimitiveType(const StringRef &TypeStr, LLVMContext &Context); 
   // Table of known glibc function prototypes
   static const std::map<StringRef, ExternalFunctions::RetAndArgs>
       GlibcFunctions;
 };
+
 #endif // LLVM_TOOLS_LLVM_MCTOLL_EXTERNALFUNCTIONS_H

@@ -1,9 +1,8 @@
-//===-- MachineInstructionRaiser.h - Binary raiser utility llvm-mctoll ----===//
+//===-- MachineInstructionRaiser.h ------------------------------*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -22,7 +21,7 @@
 
 using namespace llvm;
 
-// Structure holding all necesssary information to raise control
+// Structure holding all necessary information to raise control
 // transfer (i.e., branch) instructions during a post-processing
 // phase.
 
@@ -32,8 +31,10 @@ typedef struct {
   const MachineInstr *CandidateMachineInstr;
   // A vector of values that could be of use while raising
   // CandidateMachineInstr. If it is a call instruction,
-  // This vector has the Values corresponding to argument
+  // this vector has the Values corresponding to argument
   // registers (TODO : need to handles arguments passed on stack)
+  // If this is a conditional branch instruction, it contains the
+  // EFLAG bit values.
   std::vector<Value *> RegValues;
   // Flag to indicate that CandidateMachineInstr has been raised
   bool Raised;
@@ -42,8 +43,8 @@ typedef struct {
 class MachineInstructionRaiser {
 public:
   MachineInstructionRaiser() = delete;
-  MachineInstructionRaiser(MachineFunction &machFunc, Module &m,
-                           const ModuleRaiser *mr, MCInstRaiser *mcir = nullptr)
+  MachineInstructionRaiser(MachineFunction &machFunc, const ModuleRaiser *mr,
+                           MCInstRaiser *mcir = nullptr)
       : MF(machFunc), raisedFunction(nullptr), mcInstRaiser(mcir), MR(mr),
         PrintPass(false) {}
   virtual ~MachineInstructionRaiser(){};
@@ -51,12 +52,14 @@ public:
   virtual bool raise() { return true; };
   virtual FunctionType *getRaisedFunctionPrototype() = 0;
   virtual int getArgumentNumber(unsigned PReg) = 0;
-  virtual Value *getRegValue(unsigned PReg) = 0;
+  virtual Value *getRegOrArgValue(unsigned PReg, int MBBNo) = 0;
   virtual bool buildFuncArgTypeVector(const std::set<MCPhysReg> &,
                                       std::vector<Type *> &) = 0;
 
   Function *getRaisedFunction() { return raisedFunction; }
   MCInstRaiser *getMCInstRaiser() { return mcInstRaiser; }
+  MachineFunction &getMF() { return MF; };
+  const ModuleRaiser *getModuleRaiser() { return MR; }
 
   std::vector<ControlTransferInfo *> getControlTransferInfo() {
     return CTInfo;
@@ -65,7 +68,7 @@ public:
 protected:
   MachineFunction &MF;
   // This is the Function object that holds the raised abstraction of MF.
-  // Not the the fucntion associated with MF should not be referenced or
+  // Not the the function associated with MF should not be referenced or
   // updated. It was created just to enable the creation of MF.
   Function *raisedFunction;
   MCInstRaiser *mcInstRaiser;

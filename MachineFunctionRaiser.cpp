@@ -1,159 +1,100 @@
-//===-- MachineFunctionRaiser.cpp - Binary raiser utility llvm-mctoll -----===//
+//===-- MachineFunctionRaiser.cpp -------------------------------*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
-//
-//===----------------------------------------------------------------------===//
-//
-// This file contains the implementaion of MachineFunctionRaiser class for use
-// by llvm-mctoll.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
 #include "MachineFunctionRaiser.h"
-#include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Target/TargetMachine.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-// ARM Raiser passes
-MachineInstructionRaiser *
-InitializeARMMachineInstructionRaiser(MachineFunction &machFunc, Module &m,
-                                      const ModuleRaiser *mr,
-                                      MCInstRaiser *mcir);
-
-// X86 Raiser passes
-MachineInstructionRaiser *
-InitializeX86MachineInstructionRaiser(MachineFunction &machFunc, Module &m,
-                                      const ModuleRaiser *mr,
-                                      MCInstRaiser *mcir);
-#ifdef __cplusplus
-}
-#endif
-
-void MachineFunctionRaiser::init(uint64_t start, uint64_t end) {
-  mcInstRaiser = new MCInstRaiser(start, end);
-  machineInstRaiser = nullptr;
-  auto arch = MR->getTargetMachine()->getTargetTriple().getArch();
-
-  // Double check supported architecture.
-  if (!MR->isSupportedArch()) {
-    outs() << arch << "Unsupported architecture\n";
-    return;
-  }
-
-  switch (arch) {
-  case Triple::x86_64:
-    machineInstRaiser =
-        InitializeX86MachineInstructionRaiser(MF, module, MR, mcInstRaiser);
-    break;
-  case Triple::arm:
-    machineInstRaiser =
-        InitializeARMMachineInstructionRaiser(MF, module, MR, mcInstRaiser);
-    break;
-  // Add default case to pacify the compiler warnings.
-  default:
-    outs() << "\n" << arch << " not yet supported for raising\n";
-  }
-}
-
 bool MachineFunctionRaiser::runRaiserPasses() {
-  bool success = false;
-  // Do not run raise binaries of an unsupported architecture.
-  if (!MR->isSupportedArch())
-    return false;
-
+  bool Success = false;
   // Raise MCInst to MachineInstr and Build CFG
-  if (machineInstRaiser != nullptr) {
-    // Raise MachineInstr to Instruction
-    success = machineInstRaiser->raise();
-  }
-  return success;
+  if (machineInstRaiser != nullptr)
+    Success = machineInstRaiser->raise();
+
+  cleanupRaisedFunction();
+  return Success;
 }
 
-/* NOTE : The following ModuleRaiser class functions are defined here as they
- * reference MachineFunctionRaiser class that has a forward declaration in
- * ModuleRaiser.h.
- */
-// Create a new MachineFunctionRaiser object and add it to the list of
-// MachineFunction raiser objects of this module.
-MachineFunctionRaiser *ModuleRaiser::CreateAndAddMachineFunctionRaiser(
-    Function *f, const ModuleRaiser *mr, uint64_t start, uint64_t end) {
-  MachineFunctionRaiser *mfRaiser = new MachineFunctionRaiser(
-      M, mr->getMachineModuleInfo()->getOrCreateMachineFunction(*f), mr, start,
-      end);
-  mfRaiserVector.push_back(mfRaiser);
-  return mfRaiser;
+// Cleanup empty basic blocks from raised function
+void MachineFunctionRaiser::cleanupRaisedFunction() {
+  Function *RaisedFunc = getRaisedFunction();
+  std::vector<BasicBlock *> EmptyBlocks;
+  for (BasicBlock &BB : *RaisedFunc)
+    if (BB.empty())
+      EmptyBlocks.push_back(&BB);
+
+  for (BasicBlock *BB : EmptyBlocks)
+    BB->removeFromParent();
 }
+
+// NOTE : The following ModuleRaiser class functions are defined here as they
+// reference MachineFunctionRaiser class that has a forward declaration in
+// ModuleRaiser.h.
 
 Function *ModuleRaiser::getFunctionAt(uint64_t Index) const {
   int64_t TextSecAddr = getTextSectionAddress();
-  for (auto MFR : mfRaiserVector) {
-    if ((MFR->getMCInstRaiser()->getFuncStart() + TextSecAddr) == Index) {
+  for (auto MFR : mfRaiserVector)
+    if ((MFR->getMCInstRaiser()->getFuncStart() + TextSecAddr) == Index)
       return MFR->getRaisedFunction();
-    }
-  }
+
   return nullptr;
 }
 
 const RelocationRef *ModuleRaiser::getDynRelocAtOffset(uint64_t Loc) const {
-  if (DynRelocs.empty()) {
+  if (DynRelocs.empty())
     return nullptr;
-  }
-  auto relocIter = std::find_if(
+
+  auto RelocIter = std::find_if(
       DynRelocs.begin(), DynRelocs.end(),
-      [Loc](const RelocationRef &a) -> bool { return (a.getOffset() == Loc); });
-  if (relocIter != DynRelocs.end()) {
-    return &(*relocIter);
-  } else {
-    return nullptr;
-  }
+      [Loc](const RelocationRef &A) -> bool { return (A.getOffset() == Loc); });
+  if (RelocIter != DynRelocs.end())
+    return &(*RelocIter);
+
+  return nullptr;
 }
 
 // Return relocation whose offset is in the range [Index, Index+Size)
 const RelocationRef *ModuleRaiser::getTextRelocAtOffset(uint64_t Index,
                                                         uint64_t Size) const {
-  if (TextRelocs.empty()) {
+  if (TextRelocs.empty())
     return nullptr;
-  }
-  auto relocIter = std::find_if(TextRelocs.begin(), TextRelocs.end(),
-                                [Index, Size](const RelocationRef &a) -> bool {
-                                  return ((a.getOffset() >= Index) &&
-                                          (a.getOffset() < (Index + Size)));
+
+  auto RelocIter = std::find_if(TextRelocs.begin(), TextRelocs.end(),
+                                [Index, Size](const RelocationRef &A) -> bool {
+                                  return ((A.getOffset() >= Index) &&
+                                          (A.getOffset() < (Index + Size)));
                                 });
-  if (relocIter != TextRelocs.end()) {
-    return &(*relocIter);
-  } else {
-    return nullptr;
-  }
+  if (RelocIter != TextRelocs.end())
+    return &(*RelocIter);
+
+  return nullptr;
 }
 
 Function *ModuleRaiser::getCalledFunctionUsingTextReloc(uint64_t Loc,
                                                         uint64_t Size) const {
   // Find the text relocation with offset in the range [Loc, Loc+Size)
-  const RelocationRef *textReloc = getTextRelocAtOffset(Loc, Loc + Size);
-  if (textReloc != nullptr) {
-    Expected<StringRef> sym = textReloc->getSymbol()->getName();
-    assert(sym && "Failed to find call target symbol");
+  const RelocationRef *TextReloc = getTextRelocAtOffset(Loc, Loc + Size);
+  if (TextReloc != nullptr) {
+    Expected<StringRef> Sym = TextReloc->getSymbol()->getName();
+    assert(Sym && "Failed to find call target symbol");
     for (auto MFR : mfRaiserVector) {
-      Function *FP = MFR->getRaisedFunction();
-      assert(FP && "Unexpected null function pointer encountered");
-      if (sym->equals(FP->getName()))
-        return FP;
+      Function *F = MFR->getRaisedFunction();
+      assert(F && "Unexpected null function pointer encountered");
+      if (Sym->equals(F->getName()))
+        return F;
     }
   }
   return nullptr;
 }
 
 bool ModuleRaiser::runMachineFunctionPasses() {
-  bool success = true;
+  bool Success = true;
 
-  // For each of the functions, run passes to
-  // set up for instruction raising.
+  // For each of the functions, run passes to set up for instruction raising.
   for (auto MFR : mfRaiserVector) {
     // 1. Build CFG
     MCInstRaiser *MCIR = MFR->getMCInstRaiser();
@@ -172,11 +113,12 @@ bool ModuleRaiser::runMachineFunctionPasses() {
       assert(FT != nullptr && "Failed to build function prototype");
     }
   }
+
   // Run instruction raiser passes.
-  for (auto MFR : mfRaiserVector) {
-    success |= MFR->runRaiserPasses();
-  }
-  return success;
+  for (auto MFR : mfRaiserVector)
+    Success |= MFR->runRaiserPasses();
+
+  return Success;
 }
 
 // Get the MachineFunction associated with the placeholder
@@ -203,9 +145,9 @@ bool ModuleRaiser::collectTextSectionRelocs(const SectionRef &TextSec) {
       // If the corresponding relocated section is TextSec, CandRelocSection
       // is the section with relocation information for TextSec.
       if (RelocatedSecIter->getIndex() == (uint64_t)TextSectionIndex) {
-        for (const RelocationRef &reloc : CandRelocSection.relocations()) {
+        for (const RelocationRef &reloc : CandRelocSection.relocations())
           TextRelocs.push_back(reloc);
-        }
+
         // Sort the relocations
         std::sort(TextRelocs.begin(), TextRelocs.end(),
                   [](const RelocationRef &a, const RelocationRef &b) -> bool {
@@ -218,86 +160,44 @@ bool ModuleRaiser::collectTextSectionRelocs(const SectionRef &TextSec) {
   return true;
 }
 
-bool ModuleRaiser::collectDynamicRelocations() {
-
-  if (!Obj->isELF()) {
-    return false;
-  }
-
-  const ELF64LEObjectFile *Elf64LEObjFile = dyn_cast<ELF64LEObjectFile>(Obj);
-  if (!Elf64LEObjFile) {
-    return false;
-  }
-
-  std::vector<SectionRef> DynRelSec = Obj->dynamic_relocation_sections();
-
-  for (const SectionRef &Section : DynRelSec) {
-    for (const RelocationRef &Reloc : Section.relocations()) {
-      DynRelocs.push_back(Reloc);
-    }
-  }
-
-  // Get relocations of .got.plt section from .rela.plt if it exists. I do not
-  // see an API in ObjectFile class to get at these.
-
-  // Find .got.plt and .rela.plt sections Note: A lot of verification and double
-  // checking done in the following code.
-  const ELFFile<ELF64LE> *ElfFile = Elf64LEObjFile->getELFFile();
-  // Find .rela.plt
-  SectionRef DotGotDotPltSec, DotRelaDotPltSec;
-  for (const SectionRef Section : Obj->sections()) {
-    StringRef SecName;
-    Section.getName(SecName);
-    if (SecName.equals(".rela.plt")) {
-      DotRelaDotPltSec = Section;
-    } else if (SecName.equals(".got.plt")) {
-      DotGotDotPltSec = Section;
-    }
-  }
-  if (DotRelaDotPltSec.getObject() != nullptr) {
-    // Do some additional sanity checks
-    assert((DotGotDotPltSec.getObject() != nullptr) &&
-           "Failed to find .got.plt section");
-    auto DotRelaDotPltShdr = ElfFile->getSection(DotRelaDotPltSec.getIndex());
-    assert(DotRelaDotPltShdr && "Failed to find .rela.plt section");
-    assert((DotRelaDotPltShdr.get()->sh_info == DotGotDotPltSec.getIndex()) &&
-           ".rela.plt does not refer .got.plt section");
-    assert((DotRelaDotPltShdr.get()->sh_type == ELF::SHT_RELA) &&
-           "Unexpected type of section .rela.plt");
-    for (const RelocationRef &Reloc : DotRelaDotPltSec.relocations()) {
-      DynRelocs.push_back(Reloc);
-    }
-  }
-  return true;
-}
-
 // Return text section address; or -1 if text section is not found
 int64_t ModuleRaiser::getTextSectionAddress() const {
-  if (!Obj->isELF()) {
+  if (!Obj->isELF())
     return -1;
-  }
+
   assert(TextSectionIndex >= 0 && "Unexpected negative index of text section");
-  for (SectionRef Sec : Obj->sections()) {
-    if (Sec.getIndex() == (unsigned)TextSectionIndex) {
+  for (SectionRef Sec : Obj->sections())
+    if (Sec.getIndex() == (unsigned)TextSectionIndex)
       return Sec.getAddress();
-    }
-  }
-  assert(false && "Failed to locate text section.");
-  return -1;
+
+  llvm_unreachable("Failed to locate text section.");
 }
 
-const Value *ModuleRaiser::getRODataValueAt(uint64_t offset) const {
-  Value *V = nullptr;
-  auto iter = GlobalRODataValues.find(offset);
-  if (iter != GlobalRODataValues.end()) {
-    V = iter->second;
-  }
-  return V;
+const Value *ModuleRaiser::getRODataValueAt(uint64_t Offset) const {
+  auto Iter = GlobalRODataValues.find(Offset);
+  if (Iter != GlobalRODataValues.end())
+    return Iter->second;
+
+  return nullptr;
 }
 
-void ModuleRaiser::addRODataValueAt(Value *v, uint64_t offset) const {
-  assert((GlobalRODataValues.find(offset) == GlobalRODataValues.end()) &&
+void ModuleRaiser::addRODataValueAt(Value *V, uint64_t Offset) const {
+  assert((GlobalRODataValues.find(Offset) == GlobalRODataValues.end()) &&
          "Attempt to insert value for already existing rodata location");
-  GlobalRODataValues.emplace(offset, v);
-  return;
+  GlobalRODataValues.emplace(Offset, V);
+}
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define MODULE_RAISER(TargetName) void Initialize##TargetName##ModuleRaiser();
+#include "Raisers.def"
+#ifdef __cplusplus
+}
+#endif
+
+void ModuleRaiser::InitializeAllModuleRaisers() {
+#define MODULE_RAISER(TargetName) Initialize##TargetName##ModuleRaiser();
+#include "Raisers.def"
 }

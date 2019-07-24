@@ -1,14 +1,8 @@
-//===---- MCInstRaiser.h - Binary raiser utility llvm-mctoll --------------===//
+//===-- MCInstRaiser.h ------------------------------------------*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
-//
-//===----------------------------------------------------------------------===//
-//
-// This file contains the declaration of MCInstRaiser class for use by
-// llvm-mctoll.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -30,18 +24,16 @@ class MCInstRaiser {
 public:
   using const_mcinst_iter = std::map<uint64_t, MCInstOrData>::const_iterator;
 
-  MCInstRaiser(uint64_t fStart, uint64_t fEnd)
-      : FuncStart(fStart), FuncEnd(fEnd), dataInCode(false){};
+  MCInstRaiser(uint64_t Start, uint64_t End)
+      : FuncStart(Start), FuncEnd(End), dataInCode(false) {};
+
   void addTarget(uint64_t targetIndex) {
     // Add targetIndex only if it falls within the function start and end
-    // assert((targetIndex >= FuncStart) && (targetIndex <= FuncEnd) &&
-    //       "Failed to add target that is outside the function range");
-    if (!((targetIndex >= FuncStart) && (targetIndex <= FuncEnd))) {
-      errs() << "*** WARNING Out of range target not added.\n";
+    if (!((targetIndex >= FuncStart) && (targetIndex <= FuncEnd)))
       return;
-    }
     targetIndices.insert(targetIndex);
   }
+
   void addMCInstOrData(uint64_t index, MCInstOrData mcInst);
 
   void buildCFG(MachineFunction &MF, const MCInstrAnalysis *mia,
@@ -64,11 +56,13 @@ public:
 
   // Get the MBB number that corresponds to MCInst at Offset.
   // MBB has the raised MachineInstr corresponding to MCInst at
-  // Offset is the first instruction
-  uint64_t getMBBNumberOfMCInstOffset(uint64_t Offset) const {
+  // Offset is the first instruction.
+  // return -1 if no MBB maps to the specified MCinst offset
+  int64_t getMBBNumberOfMCInstOffset(uint64_t Offset) const {
     auto iter = mcInstToMBBNum.find(Offset);
-    assert(iter != mcInstToMBBNum.end() && "Non-existent MCInst offset");
-    return (*iter).second;
+    if (iter != mcInstToMBBNum.end())
+      return (*iter).second;
+    return -1;
   }
 
   // Returns the iterator pointing to MCInstOrData at Offset in
@@ -78,22 +72,22 @@ public:
   }
 
   const_mcinst_iter const_mcinstr_end() const { return mcInstMap.end(); }
+
   // Get the size of instruction
   uint64_t getMCInstSize(uint64_t Offset) const {
-    const_mcinst_iter iter = mcInstMap.find(Offset);
-    const_mcinst_iter end = mcInstMap.end();
-    uint64_t InstSize = 0;
-    assert(iter != end && "Attempt to find MCInst at non-existent offset");
-    if (iter.operator++() != end) {
-      uint64_t NextOffset = (*iter).first;
-      InstSize = NextOffset - Offset;
-    } else {
-      // The instruction at Offset is the last instriuction in the input stream
-      assert(Offset < FuncEnd &&
-             "Attempt to find MCInst at offset beyond function end");
-      InstSize = FuncEnd - Offset;
+    const_mcinst_iter Iter = mcInstMap.find(Offset);
+    const_mcinst_iter End = mcInstMap.end();
+    assert(Iter != End && "Attempt to find MCInst at non-existent offset");
+
+    if (Iter.operator++() != End) {
+      uint64_t NextOffset = (*Iter).first;
+      return NextOffset - Offset;
     }
-    return InstSize;
+
+    // The instruction at Offset is the last instriuction in the input stream
+    assert(Offset < FuncEnd &&
+           "Attempt to find MCInst at offset beyond function end");
+    return FuncEnd - Offset;
   }
 
   uint64_t getMCInstIndex(const MachineInstr &MI) {
@@ -135,12 +129,13 @@ private:
   std::map<uint64_t, std::vector<uint64_t>> MBBNumToMCInstTargetsMap;
   MachineInstr *RaiseMCInst(const MCInstrInfo &, MachineFunction &, MCInst,
                             uint64_t);
-  // Start and End offsets of the array of MCInsts in mcInstVector;
+  // Start and End offsets of the array of MCInsts in mcInstVector
   uint64_t FuncStart;
   uint64_t FuncEnd;
   // Flag to indicate that the mcInstVector includes data (or uint32_ sized
-  // quantities that the disassembler was unable to recognize as instrictions
+  // quantities that the disassembler was unable to recognize as instructions
   // and are considered data
   bool dataInCode;
 };
+
 #endif // LLVM_TOOLS_LLVM_MCTOLL_MCINSTRAISER_H

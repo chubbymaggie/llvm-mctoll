@@ -1,9 +1,8 @@
-//==-- X86MachineInstructionRaiser.h - Binary raiser utility llvm-mctoll =====//
+//===-- X86MachineInstructionRaiser.h ---------------------------*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -11,20 +10,53 @@
 // class for use by llvm-mctoll.
 //
 //===----------------------------------------------------------------------===//
+
 #ifndef LLVM_TOOLS_LLVM_MCTOLL_X86_X86MACHINEINSTRUCTIONRAISER_H
 #define LLVM_TOOLS_LLVM_MCTOLL_X86_X86MACHINEINSTRUCTIONRAISER_H
 
 #include "MachineInstructionRaiser.h"
 #include "X86AdditionalInstrInfo.h"
 
+/*
+ * Type alias for Map of MBBNo -> BasicBlock * used to keep track of
+ * MachineBasicBlock and corresponding raised BasicBlock
+ */
 using MBBNumToBBMap = std::map<unsigned int, BasicBlock *>;
+
+// Tuple of <PhysReg, DefiningMBBNo, Alloca>
+// When promoting reaching definitions there may be situations where the
+// predecessor block that defines a reaching definition may not yet have
+// been raised. This tuple represents the Alloca slot to which
+// the value of PhysReg defined in DefiningMBB should be stored once it is
+// raised.
+using PhysRegMBBValTuple = std::tuple<unsigned int, unsigned int, Value *>;
+
+// MCPhysReg set
+using MCPhysRegSet = std::set<MCPhysReg>;
+
+// Map of 64-bit super register -> size of register access
+using MCPhysRegSizeMap = std::map<MCPhysReg, uint16_t>;
+
+// Forward declaration of X86RaisedValueTracker
+class X86RaisedValueTracker;
 
 class X86MachineInstructionRaiser : public MachineInstructionRaiser {
 public:
   X86MachineInstructionRaiser() = delete;
-  X86MachineInstructionRaiser(MachineFunction &machFunc, Module &m,
-                              const ModuleRaiser *mr, MCInstRaiser *mcir);
+  X86MachineInstructionRaiser(MachineFunction &MF, const ModuleRaiser *MR,
+                              MCInstRaiser *MIR);
   bool raise();
+
+  // Return the 64-bit super-register of PhysReg.
+  unsigned int find64BitSuperReg(unsigned int PhysReg);
+  // Return the Type of the physical register.
+  Type *getPhysRegType(unsigned int PhysReg);
+
+  bool insertAllocaInEntryBlock(Instruction *alloca);
+  BasicBlock *getRaisedBasicBlock(const MachineBasicBlock *);
+  bool recordDefsToPromote(unsigned PhysReg, unsigned MBBNo, Value *Alloca);
+  StoreInst *promotePhysregToStackSlot(int PhysReg, Value *ReachingValue,
+                                       int MBBNo, AllocaInst *Alloca);
 
 private:
   // Bit positions used for individual status flags of EFLAGS register.
@@ -38,12 +70,17 @@ private:
     EFLAGS_OF = 11,
     EFLAGS_UNDEFINED = 32
   };
-  // Map of physical registers -> virtual registers
-  std::map<unsigned int, unsigned int> physToVirtMap;
 
-  // Map of physical registers -> Value * created
-  std::map<unsigned int, Value *> physToValueMap;
-  // std::stack<Value *> FPURegisterStack;
+  X86RaisedValueTracker *raisedValues;
+
+  // Set of reaching definitions that were not promoted during since defining
+  // block is not yet raised and need to be promoted upon raising all blocks.
+  std::set<PhysRegMBBValTuple> reachingDefsToPromote;
+
+  // A map of MBB number to known defined registers along with the access size
+  // at the exit of the MBB.
+  std::map<int, MCPhysRegSizeMap> PerMBBDefinedPhysRegMap;
+
   static const uint8_t FPUSTACK_SZ = 8;
   struct {
     int8_t TOP;
@@ -62,51 +99,55 @@ private:
   bool raiseMachineFunction();
   FunctionType *getRaisedFunctionPrototype();
   // This raises MachineInstr to MachineInstruction
-  bool raiseMachineInstr(MachineInstr &, BasicBlock *);
+  bool raiseMachineInstr(MachineInstr &);
   // Cleanup MachineBasicBlocks
   bool deleteNOOPInstrMI(MachineBasicBlock &, MachineBasicBlock::iterator);
   bool deleteNOOPInstrMF();
+  bool unlinkEmptyMBBs();
 
   // Raise specific classes of instructions
   bool raisePushInstruction(const MachineInstr &);
   bool raisePopInstruction(const MachineInstr &);
 
-  bool raiseMemRefMachineInstr(const MachineInstr &, BasicBlock *);
-  bool raiseReturnMachineInstr(const MachineInstr &, BasicBlock *);
-  bool raiseGenericMachineInstr(const MachineInstr &, BasicBlock *);
+  bool raiseMemRefMachineInstr(const MachineInstr &);
+  bool raiseReturnMachineInstr(const MachineInstr &);
+  bool raiseGenericMachineInstr(const MachineInstr &);
 
-  bool raiseConvertBWWDDQMachineInstr(const MachineInstr &, BasicBlock *);
-  bool raiseConvertWDDQQOMachineInstr(const MachineInstr &, BasicBlock *);
-  bool raiseLEAMachineInstr(const MachineInstr &, BasicBlock *);
-  bool raiseMoveRegToRegMachineInstr(const MachineInstr &, BasicBlock *);
-  bool raiseMoveImmToRegMachineInstr(const MachineInstr &, BasicBlock *);
-  bool raiseBinaryOpRegToRegMachineInstr(const MachineInstr &, BasicBlock *);
-  bool raiseBinaryOpImmToRegMachineInstr(const MachineInstr &, BasicBlock *);
-  bool raiseSetCCMachineInstr(const MachineInstr &, BasicBlock *);
+  bool raiseConvertBWWDDQMachineInstr(const MachineInstr &);
+  bool raiseConvertWDDQQOMachineInstr(const MachineInstr &);
+  bool raiseLEAMachineInstr(const MachineInstr &);
+  bool raiseMoveRegToRegMachineInstr(const MachineInstr &);
+  bool raiseMoveImmToRegMachineInstr(const MachineInstr &);
+  bool raiseBinaryOpRegToRegMachineInstr(const MachineInstr &);
+  bool raiseBinaryOpImmToRegMachineInstr(const MachineInstr &);
+  bool raiseSetCCMachineInstr(const MachineInstr &);
+  bool raiseCallMachineInstr(const MachineInstr &);
 
-  bool raiseCompareMachineInstr(const MachineInstr &, BasicBlock *, bool,
-                                Value *);
-
-  bool raiseCallMachineInstr(const MachineInstr &, BasicBlock *);
-
-  bool raiseMoveToMemInstr(const MachineInstr &, BasicBlock *, Value *);
-  bool raiseMoveFromMemInstr(const MachineInstr &, BasicBlock *, Value *);
-  bool raiseBinaryOpMemToRegInstr(const MachineInstr &, BasicBlock *, Value *);
-  bool raiseDivideInstr(const MachineInstr &, BasicBlock *, Value *);
-  bool raiseLoadIntToFloatRegInstr(const MachineInstr &, BasicBlock *, Value *);
-  bool raiseStoreIntToFloatRegInstr(const MachineInstr &, BasicBlock *,
-                                    Value *);
-  bool raiseFPURegisterOpInstr(const MachineInstr &, BasicBlock *);
+  bool raiseCompareMachineInstr(const MachineInstr &, bool, Value *);
+  bool raiseNotOpMemInstr(const MachineInstr &, Value *);
+  bool raiseMoveToMemInstr(const MachineInstr &, Value *);
+  bool raiseMoveFromMemInstr(const MachineInstr &, Value *);
+  bool raiseBinaryOpMemToRegInstr(const MachineInstr &, Value *);
+  bool raiseDivideInstr(const MachineInstr &, Value *);
+  bool raiseLoadIntToFloatRegInstr(const MachineInstr &, Value *);
+  bool raiseStoreIntToFloatRegInstr(const MachineInstr &, Value *);
+  bool raiseFPURegisterOpInstr(const MachineInstr &);
 
   bool raiseBranchMachineInstrs();
   bool raiseDirectBranchMachineInstr(ControlTransferInfo *);
   bool raiseIndirectBranchMachineInstr(ControlTransferInfo *);
 
+  // Adjust sizes of stack allocated objects
+  bool adjustStackAllocatedObjects();
+
   // Method to record information that is used in a second pass
   // to raise control transfer instructions in a second pass.
-  bool recordMachineInstrInfo(const MachineInstr &, BasicBlock *);
+  bool recordMachineInstrInfo(const MachineInstr &);
 
-  bool insertAllocaInEntryBlock(Instruction *alloca);
+  // Raise Machine Jumptable
+  bool raiseMachineJumpTable();
+
+  Instruction *raiseConditonforJumpTable(MachineBasicBlock &mbb);
 
   // FPU Stack access functions
   void FPURegisterStackPush(Value *);
@@ -120,27 +161,46 @@ private:
   Value *getGlobalVariableValueAt(const MachineInstr &, uint64_t);
   const Value *getOrCreateGlobalRODataValueAtOffset(int64_t Offset,
                                                     Type *OffsetTy);
-  Value *getMemoryAddressExprValue(const MachineInstr &, BasicBlock *);
-  Value *createPCRelativeAccesssValue(const MachineInstr &, BasicBlock *);
+  Value *getMemoryAddressExprValue(const MachineInstr &);
+  Value *createPCRelativeAccesssValue(const MachineInstr &);
 
   bool changePhysRegToVirtReg(MachineInstr &);
 
-  unsigned int find64BitSuperReg(unsigned int);
-  Value *findPhysRegSSAValue(unsigned int);
-  Value *matchSSAValueToSrcRegSize(const MachineInstr &mi, unsigned SrcOpIndex,
-                                   BasicBlock *curBlock);
+  Value *matchSSAValueToSrcRegSize(const MachineInstr &mi, unsigned SrcOpIndex);
 
-  std::pair<std::map<unsigned int, Value *>::iterator, bool>
-  updatePhysRegSSAValue(unsigned int PhysReg, Value *);
   Type *getFunctionReturnType();
-  Type *getReturnTypeFromMBB(MachineBasicBlock &MBB);
+  Type *getReturnTypeFromMBB(MachineBasicBlock &MBB, bool &HasCall);
   Function *getTargetFunctionAtPLTOffset(const MachineInstr &, uint64_t);
-  Value *getStackAllocatedValue(const MachineInstr &, BasicBlock *,
-                                X86AddressMode &);
+  Value *getStackAllocatedValue(const MachineInstr &, X86AddressMode &, bool);
   int getArgumentNumber(unsigned PReg);
   bool buildFuncArgTypeVector(const std::set<MCPhysReg> &,
                               std::vector<Type *> &);
+  Value *getRegOrArgValue(unsigned PReg, int MBBNo);
+  Value *getRegOperandValue(const MachineInstr &mi, unsigned OperandIndex);
 
-  Value *getRegValue(unsigned);
+  bool handleUnpromotedReachingDefs();
+
+  bool hasPhysRegDefInBlock(int PhysReg, const MachineInstr *StartMI,
+                            const MachineBasicBlock *MBB,
+                            unsigned StopAtInstProp, bool &HasStopInst);
+
+  void AddRegisterToFunctionLiveInSet(MCPhysRegSet &CurLiveSet, unsigned Reg);
+
+  // JumpTableBlock - the Jumptable case.
+  using JumpTableBlock = std::pair<ConstantInt *, MachineBasicBlock *>;
+
+  struct JumpTableInfo {
+    // Jump table index
+    unsigned jtIdx;
+
+    // Conditon Machine BasicBlock.
+    MachineBasicBlock *conditionMBB;
+
+    // Default Machine BasicBlock.
+    MachineBasicBlock *df_MBB;
+  };
+
+  std::vector<JumpTableInfo> jtList;
 };
+
 #endif // LLVM_TOOLS_LLVM_MCTOLL_X86_X86ELIMINATEPROLOGEPILOG_H

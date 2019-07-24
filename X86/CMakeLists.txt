@@ -9,7 +9,12 @@ if(NOT LLVM_MCTOLL_BUILT_STANDALONE)
 endif()
 
 add_llvm_library(X86Raiser
+  X86ModuleRaiser.cpp
   X86MachineInstructionRaiser.cpp
+  X86JumpTables.cpp
+  X86RaisedValueTracker.cpp
+  X86RegisterUtils.cpp
+  X86FuncPrototypeDiscovery.cpp
 
   DEPENDS
     ${LLVM_MCTOLL_DEPS}

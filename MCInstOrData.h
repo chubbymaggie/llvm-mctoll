@@ -1,14 +1,8 @@
-//===---- MCInstOrData.h - Binary raiser utility llvm-mctoll --------------===//
+//===-- MCInstOrData.h ------------------------------------------*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
-//
-//===----------------------------------------------------------------------===//
-//
-// This file contains the declaration of MCInstOrData class for use by
-// llvm-mctoll.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -24,22 +18,24 @@ private:
   enum class Tag { DATA, INSTRUCTION };
 
   union {
-    uint32_t d;
-    MCInst i;
+    uint32_t Data;
+    MCInst Inst;
   };
 
-  Tag type;
+  Tag Type;
 
 public:
   ~MCInstOrData();
-  MCInstOrData &operator=(const MCInstOrData &);
-  MCInstOrData(const MCInstOrData &);
-  MCInstOrData(const MCInst &);
-  MCInstOrData(const uint32_t);
-  MCInst get_mcInst() const;
-  uint32_t get_data() const;
-  bool is_data() const { return (type == Tag::DATA); }
-  bool is_mcInst() const { return (type == Tag::INSTRUCTION); }
+  MCInstOrData &operator=(const MCInstOrData &E);
+  MCInstOrData(const MCInstOrData &V);
+  MCInstOrData(const MCInst &V);
+  MCInstOrData(const uint32_t V);
+
+  uint32_t getData() const { return Data; }
+  MCInst getMCInst() const { return Inst; }
+  bool isData() const { return (Type == Tag::DATA); }
+  bool isMCInst() const { return (Type == Tag::INSTRUCTION); }
+
   void dump() const;
 };
 

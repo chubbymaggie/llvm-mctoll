@@ -1,28 +1,23 @@
-//===-- ARMEliminatePrologEpilog.cpp - Binary raiser utility llvm-mctoll --===//
+//===-- ARMEliminatePrologEpilog.cpp ----------------------------*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
-//
-//===----------------------------------------------------------------------===//
-//
-// This file contains the implementation of ARMMachineInstructionRaiser class
-// for use by llvm-mctoll.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
 #include "ARMMachineInstructionRaiser.h"
 #include "ARMEliminatePrologEpilog.h"
 #include "ARMFunctionPrototype.h"
+#include "ARMModuleRaiser.h"
+#include "MachineFunctionRaiser.h"
 
 using namespace llvm;
 
 ARMMachineInstructionRaiser::ARMMachineInstructionRaiser(
-    MachineFunction &machFunc, Module &m, const ModuleRaiser *mr,
-    MCInstRaiser *mcir)
-    : MachineInstructionRaiser(machFunc, m, mr, mcir),
-      machRegInfo(MF.getRegInfo()), M(m) {}
+    MachineFunction &machFunc, const ModuleRaiser *mr, MCInstRaiser *mcir)
+    : MachineInstructionRaiser(machFunc, mr, mcir),
+      machRegInfo(MF.getRegInfo()) {}
 
 bool ARMMachineInstructionRaiser::raiseMachineFunction() {
   ModuleRaiser &rmr = const_cast<ModuleRaiser &>(*MR);
@@ -36,7 +31,6 @@ bool ARMMachineInstructionRaiser::raiseMachineFunction() {
 
 bool ARMMachineInstructionRaiser::raise() {
   raiseMachineFunction();
-
   return true;
 }
 
@@ -55,7 +49,7 @@ bool ARMMachineInstructionRaiser::buildFuncArgTypeVector(
   return false;
 }
 
-Value *ARMMachineInstructionRaiser::getRegValue(unsigned PReg) {
+Value *ARMMachineInstructionRaiser::getRegOrArgValue(unsigned PReg, int MBBNo) {
   assert(false && "Unimplemented ARMMachineInstructionRaiser::getRegValue()");
   return nullptr;
 }
@@ -72,15 +66,15 @@ FunctionType *ARMMachineInstructionRaiser::getRaisedFunctionPrototype() {
   return raisedFunction->getFunctionType();
 }
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-MachineInstructionRaiser *
-InitializeARMMachineInstructionRaiser(MachineFunction &machFunc, Module &m,
-                                      const ModuleRaiser *mr,
-                                      MCInstRaiser *mcir) {
-  return new ARMMachineInstructionRaiser(machFunc, m, mr, mcir);
+// Create a new MachineFunctionRaiser object and add it to the list of
+// MachineFunction raiser objects of this module.
+MachineFunctionRaiser *ARMModuleRaiser::CreateAndAddMachineFunctionRaiser(
+    Function *f, const ModuleRaiser *mr, uint64_t start, uint64_t end) {
+  MachineFunctionRaiser *mfRaiser = new MachineFunctionRaiser(
+      *M, mr->getMachineModuleInfo()->getOrCreateMachineFunction(*f), mr, start,
+      end);
+  mfRaiser->setMachineInstrRaiser(new ARMMachineInstructionRaiser(
+      mfRaiser->getMachineFunction(), mr, mfRaiser->getMCInstRaiser()));
+  mfRaiserVector.push_back(mfRaiser);
+  return mfRaiser;
 }
-#ifdef __cplusplus
-}
-#endif
